@@ -1,6 +1,30 @@
 import { HttpClient, IHttpClientOptions, HttpClientResponse } from '@microsoft/sp-http';
 import { INintexTask } from '../models/INintexTask';
 
+export interface INintexUser {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface INintexAutoDelegation {
+  id: string;
+  userId: string;
+  effectiveFrom: string;
+  effectiveTo: string;
+  message?: string;
+  standIns: Array<{
+    id: string;
+    firstName?: string;
+    lastName?: string;
+    emails?: string[];
+  }>;
+  createdDate?: string;
+  updatedDate?: string;
+  fromUserDisplay?: string;
+}
+
 export class NintexApiService {
   private httpClient: HttpClient;
   private baseUrl: string;
@@ -84,7 +108,7 @@ export class NintexApiService {
     return data.id;
   }
 
-  public async createAutoDelegation(delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = "Auto-delegation configured via Dashboard"): Promise<boolean> {
+  public async createAutoDelegation(delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
     const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations`;
     
     const options: IHttpClientOptions = {
@@ -137,7 +161,7 @@ export class NintexApiService {
     return true;
   }
 
-  public async updateAutoDelegation(delegationId: string, delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = "Auto-delegation configured via Dashboard"): Promise<boolean> {
+  public async updateAutoDelegation(delegationId: string, delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
     const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations/${delegationId}`;
     
     const options: IHttpClientOptions = {
@@ -170,8 +194,7 @@ export class NintexApiService {
     return true;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public async listAutoDelegations(token: string): Promise<any[]> {
+  public async listAutoDelegations(token: string): Promise<INintexAutoDelegation[]> {
     const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations`;
     
     const options: IHttpClientOptions = {
@@ -191,8 +214,7 @@ export class NintexApiService {
     return Array.isArray(data) ? data : data.taskAutoDelegations || data.data || [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public async searchNintexUsers(filterText: string, token: string): Promise<any[]> {
+  public async searchNintexUsers(filterText: string, token: string): Promise<INintexUser[]> {
     if (!filterText) return [];
     const endpoint = `${this.baseUrl}/tenants/v1/users?filter=${encodeURIComponent(filterText)}&limit=20`;
     
@@ -213,8 +235,8 @@ export class NintexApiService {
     return Array.isArray(data) ? data : data.users || [];
   }
 
-  public async getNintexUserById(id: string, token: string): Promise<any> {
-    if (!id) return null;
+  public async getNintexUserById(id: string, token: string): Promise<INintexUser | undefined> {
+    if (!id) return undefined;
     const endpoint = `${this.baseUrl}/tenants/v1/users/${encodeURIComponent(id)}`;
     
     const options: IHttpClientOptions = {
@@ -227,7 +249,7 @@ export class NintexApiService {
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
       console.error(`Failed to fetch Nintex user by id ${id}`, await response.text());
-      return null;
+      return undefined;
     }
 
     return await response.json();

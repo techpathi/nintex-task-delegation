@@ -2,15 +2,14 @@ import * as React from 'react';
 import { IDelegationRunnerProps } from './IDelegationRunnerProps';
 import { NormalPeoplePicker, IPersonaProps, PrimaryButton, DefaultButton, ProgressIndicator, MessageBar, MessageBarType, DetailsList, IColumn, Dialog, DialogType, DialogFooter, Icon, IconButton, TextField, DatePicker, Spinner, SpinnerSize } from '@fluentui/react';
 import { TokenService } from '../../../../services/TokenService';
-import { NintexApiService } from '../../../../services/NintexApiService';
+import { NintexApiService, INintexAutoDelegation, INintexUser } from '../../../../services/NintexApiService';
 import { SPHttpClient } from '@microsoft/sp-http';
 
 export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [delegateUser, setDelegateUser] = React.useState<IPersonaProps | undefined>(undefined);
   const [oooUser, setOooUser] = React.useState<IPersonaProps | undefined>(undefined);
   const [nintexToken, setNintexToken] = React.useState<string>("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [delegations, setDelegations] = React.useState<any[]>([]);
+  const [delegations, setDelegations] = React.useState<INintexAutoDelegation[]>([]);
   const [isDelegating, setIsDelegating] = React.useState<boolean>(false);
   const [isPanelOpen, setIsPanelOpen] = React.useState<boolean>(false);
   const [isLoading, setIsLoading] = React.useState<boolean>(true);
@@ -25,18 +24,17 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [successMsg, setSuccessMsg] = React.useState<string>("");
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState<boolean>(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [itemToDelete, setItemToDelete] = React.useState<any>(null);
+  const [itemToDelete, setItemToDelete] = React.useState<INintexAutoDelegation | null>(null);
 
   const userCache = React.useRef<{ [key: string]: string }>({});
 
-  const loadDelegations = async (apiService: NintexApiService, token: string) => {
+  const loadDelegations = async (apiService: NintexApiService, token: string): Promise<void> => {
     const allDelegations = await apiService.listAutoDelegations(token);
     const limitDays = props.recentDaysLimit || 100;
     const pastDate = new Date();
     pastDate.setDate(pastDate.getDate() - limitDays);
     
-    const filtered = allDelegations.filter((d: any) => {
+    const filtered = allDelegations.filter((d: INintexAutoDelegation) => {
       const created = d.createdDate ? new Date(d.createdDate) : null;
       const updated = d.updatedDate ? new Date(d.updatedDate) : null;
       return (created && created >= pastDate) || (updated && updated >= pastDate) || (!created && !updated);
@@ -50,15 +48,40 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
           try {
             const u = await apiService.getNintexUserById(uId, token);
             if (u && u.email) {
-              display = u.firstName ? `${u.firstName} ${u.lastName}` : u.email;
+              display = u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : u.email;
             }
-          } catch (e) {
+          } catch {
             // Error gracefully ignored
           }
           // eslint-disable-next-line require-atomic-updates
           userCache.current[uId] = display;
         }
         filtered[i].fromUserDisplay = userCache.current[uId];
+      }
+
+      // Resolve Stand-in display name
+      if (filtered[i].standIns && filtered[i].standIns.length > 0) {
+        const standIn = filtered[i].standIns[0];
+        if (!standIn.firstName) {
+          if (!userCache.current[standIn.id]) {
+            try {
+              const u = await apiService.getNintexUserById(standIn.id, token);
+              if (u) {
+                standIn.firstName = u.firstName;
+                standIn.lastName = u.lastName;
+                // eslint-disable-next-line require-atomic-updates
+                userCache.current[standIn.id] = u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : (u.email || standIn.id);
+              }
+            } catch { /* ignore */ }
+          } else {
+             // If we have it in cache, we should ideally apply it back to the standIn object
+             // to make the onRender logic work consistently
+             const cached = userCache.current[standIn.id];
+             if (cached && cached !== standIn.id) {
+               standIn.firstName = cached; // Hacky but works for display
+             }
+          }
+        }
       }
     }
 
@@ -95,8 +118,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       const users = await nintexApiService.searchNintexUsers(filterText, nintexToken);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return users
-        .filter((u: any) => ignoreIds.indexOf(u.id) === -1)
-        .map((u: any) => ({
+        .filter((u: INintexUser) => ignoreIds.indexOf(u.id) === -1)
+        .map((u: INintexUser) => ({
           text: `${u.firstName} ${u.lastName}`,
           secondaryText: u.email,
           id: u.id,
@@ -108,8 +131,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleEditClick = (item: any) => {
+  const handleEditClick = (item: INintexAutoDelegation): void => {
     setEditingId(item.id);
     if (item.effectiveFrom) {
       const d = new Date(item.effectiveFrom);
@@ -154,13 +176,12 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     setIsPanelOpen(true);
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleDeleteClick = (item: any) => {
+  const handleDeleteClick = (item: INintexAutoDelegation): void => {
     setItemToDelete(item);
     setIsDeleteDialogOpen(true);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (): Promise<void> => {
     if (!itemToDelete) return;
     setIsDelegating(true);
     try {
@@ -236,36 +257,32 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
 
       setProgressDescription("Configuring auto-delegation rule...");
 
-      try {
-        if (editingId) {
-          setProgressDescription("Updating auto-delegation rule...");
-          await nintexApiService.updateAutoDelegation(editingId, delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message || "Auto-delegation configured via Dashboard");
-          setSuccessMsg(`Successfully updated auto-delegation rule!`);
-        } else {
-          setProgressDescription("Configuring auto-delegation rule...");
-          await nintexApiService.createAutoDelegation(delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message || "Auto-delegation configured via Dashboard");
-          setSuccessMsg(`Successfully created auto-delegation rule!`);
-        }
-        
-        setProgress(1);
-        setProgressDescription("Completed!");
-        
-        await loadDelegations(nintexApiService, nintexToken);
-
-        setIsPanelOpen(false);
-        setEditingId(null);
-        setSuccessMsg("");
-        setDelegateUser(undefined);
-        setOooUser(undefined);
-        setDateFrom(undefined);
-        setTimeFrom("00:00");
-        setDateTo(undefined);
-        setTimeTo("00:00");
-        setMessage("");
-        setProgress(0);
-      } catch (err) {
-        throw err;
+      if (editingId) {
+        setProgressDescription("Updating auto-delegation rule...");
+        await nintexApiService.updateAutoDelegation(editingId, delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message);
+        setSuccessMsg(`Successfully updated auto-delegation rule!`);
+      } else {
+        setProgressDescription("Configuring auto-delegation rule...");
+        await nintexApiService.createAutoDelegation(delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message);
+        setSuccessMsg(`Successfully created auto-delegation rule!`);
       }
+      
+      setProgress(1);
+      setProgressDescription("Completed!");
+      
+      await loadDelegations(nintexApiService, nintexToken);
+
+      setIsPanelOpen(false);
+      setEditingId(null);
+      setSuccessMsg("");
+      setDelegateUser(undefined);
+      setOooUser(undefined);
+      setDateFrom(undefined);
+      setTimeFrom("00:00");
+      setDateTo(undefined);
+      setTimeTo("00:00");
+      setMessage("");
+      setProgress(0);
     } catch (err) {
       setErrorMsg(err.message || "An unexpected error occurred.");
     } finally {
@@ -296,11 +313,12 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       minWidth: 150, 
       maxWidth: 200, 
       onRender: (item) => {
-        const email = item.standIns && item.standIns.length > 0 ? (item.standIns[0].emails && item.standIns[0].emails.length > 0 ? item.standIns[0].emails[0] : item.standIns[0].id) : '';
+        const standIn = item.standIns?.[0];
+        const displayName = standIn ? (standIn.firstName ? `${standIn.firstName} ${standIn.lastName || ''}`.trim() : (standIn.emails?.[0] || standIn.id)) : '';
         return (
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Icon iconName="Contact" style={{ marginRight: '8px' }} />
-            <span>{email}</span>
+            <span>{displayName}</span>
           </div>
         );
       }
@@ -447,6 +465,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
             setDateTo(undefined);
             setTimeTo("00:00");
             setMessage("");
+            setErrorMsg("");
+            setSuccessMsg("");
             setIsPanelOpen(true);
 
             try {
@@ -454,8 +474,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
               const users = await nintexApiService.searchNintexUsers(currentEmail, nintexToken);
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const matchingUsers = users.filter((u: any) => u.email.toLowerCase() === currentEmail.toLowerCase());
+              const matchingUsers = users.filter((u: INintexUser) => u.email.toLowerCase() === currentEmail.toLowerCase());
               if (matchingUsers.length > 0) {
                 setOooUser({
                   id: matchingUsers[0].id,
@@ -463,7 +482,9 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
                   secondaryText: matchingUsers[0].email
                 });
               }
-            } catch(e) {}
+            } catch {
+              // Ignore initialization error
+            }
           }} 
           disabled={!nintexToken} 
         />
@@ -493,6 +514,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
         onDismiss={() => {
           setIsPanelOpen(false);
           setEditingId(null);
+          setErrorMsg("");
+          setSuccessMsg("");
         }}
         dialogContentProps={{
           type: DialogType.normal,
@@ -505,6 +528,42 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '0 5px' }}>
+          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '12px', marginBottom: '2px' }}>Delegate from</label>
+              <NormalPeoplePicker
+                onResolveSuggestions={(filterText) => onResolveSuggestions(filterText, [delegateUser?.id])}
+                itemLimit={1}
+                disabled={isDelegating || !nintexToken || !!editingId}
+                onChange={(items) => setOooUser(items && items.length > 0 ? items[0] : undefined)}
+                selectedItems={oooUser ? [oooUser] : []}
+                resolveDelay={500}
+                styles={{ root: { maxWidth: '100%' } }}
+                inputProps={{ placeholder: "Search for and select 1 Nintex user" }}
+              />
+            </div>
+
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '12px', marginBottom: '2px' }}>Delegate to</label>
+              <NormalPeoplePicker
+                onResolveSuggestions={(filterText) => onResolveSuggestions(filterText, [oooUser?.id])}
+                itemLimit={1}
+                disabled={isDelegating || !nintexToken || !!editingId}
+                onChange={(items) => setDelegateUser(items && items.length > 0 ? items[0] : undefined)}
+                selectedItems={delegateUser ? [delegateUser] : []}
+                resolveDelay={500}
+                styles={{ root: { maxWidth: '100%' } }}
+                inputProps={{ placeholder: "Search for and select 1 Nintex user" }}
+              />
+            </div>
+          </div>
+
+          {editingId && (
+            <MessageBar messageBarType={MessageBarType.info}>
+              Delegator and Delegatee cannot be changed on an existing rule. Only dates and messages can be updated.
+            </MessageBar>
+          )}
+
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 250px' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -524,7 +583,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
                     styles={{ root: { width: '100%' } }}
                   />
                 </div>
-                <div style={{ width: '100px' }}>
+                <div style={{ width: '130px' }}>
                   <TextField 
                     label="Start time" 
                     type="time" 
@@ -569,7 +628,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
                     styles={{ root: { width: '100%' } }}
                   />
                 </div>
-                <div style={{ width: '100px' }}>
+                <div style={{ width: '130px' }}>
                   <TextField 
                     label="End time" 
                     type="time" 
@@ -585,40 +644,6 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
                     min={endMinTime}
                   />
                 </div>
-              </div>
-            </div>
-          </div>
-          
-          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '12px', marginBottom: '2px' }}>Delegate from</label>
-              <div style={{ fontSize: '12px', color: '#605e5c', marginBottom: '5px' }}>Search for and select 1 user</div>
-              <div style={{ maxWidth: '100%', overflow: 'hidden' }}>
-                <NormalPeoplePicker
-                  onResolveSuggestions={(filterText) => onResolveSuggestions(filterText, [delegateUser?.id])}
-                  itemLimit={1}
-                  disabled={isDelegating || !nintexToken}
-                  onChange={(items) => setOooUser(items && items.length > 0 ? items[0] : undefined)}
-                  selectedItems={oooUser ? [oooUser] : []}
-                  resolveDelay={500}
-                  styles={{ root: { maxWidth: '100%' } }}
-                />
-              </div>
-            </div>
-
-            <div style={{ flex: '1 1 200px' }}>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '12px', marginBottom: '2px' }}>Delegate to</label>
-              <div style={{ fontSize: '12px', color: '#605e5c', marginBottom: '5px' }}>Search for and select 1 user</div>
-              <div style={{ maxWidth: '100%', overflow: 'hidden' }}>
-                <NormalPeoplePicker
-                  onResolveSuggestions={(filterText) => onResolveSuggestions(filterText, [oooUser?.id])}
-                  itemLimit={1}
-                  disabled={isDelegating || !nintexToken}
-                  onChange={(items) => setDelegateUser(items && items.length > 0 ? items[0] : undefined)}
-                  selectedItems={delegateUser ? [delegateUser] : []}
-                  resolveDelay={500}
-                  styles={{ root: { maxWidth: '100%' } }}
-                />
               </div>
             </div>
           </div>
@@ -651,6 +676,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
           <DefaultButton onClick={() => {
             setIsPanelOpen(false);
             setEditingId(null);
+            setErrorMsg("");
+            setSuccessMsg("");
           }} text="Cancel" disabled={isDelegating} />
           <PrimaryButton onClick={handleDelegate} text={editingId ? "Update" : "Add"} disabled={isDelegating} />
         </DialogFooter>

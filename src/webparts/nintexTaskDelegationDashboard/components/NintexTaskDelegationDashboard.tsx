@@ -3,7 +3,7 @@ import styles from './NintexTaskDelegationDashboard.module.scss';
 import type { INintexTaskDelegationDashboardProps } from './INintexTaskDelegationDashboardProps';
 import { DelegationRunner } from './DelegationRunner/DelegationRunner';
 
-export default function NintexTaskDelegationDashboard(props: INintexTaskDelegationDashboardProps) {
+export default function NintexTaskDelegationDashboard(props: INintexTaskDelegationDashboardProps): React.ReactElement {
   return (
     <section className={`${styles.nintexTaskDelegationDashboard} ${props.hasTeamsContext ? styles.teams : ''}`}>
       <DelegationRunner
