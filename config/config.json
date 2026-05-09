@@ -1,0 +1,19 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/config.2.0.schema.json",
+  "version": "2.0",
+  "bundles": {
+    "nintex-task-delegation-dashboard-web-part": {
+      "components": [
+        {
+          "entrypoint": "./lib/webparts/nintexTaskDelegationDashboard/NintexTaskDelegationDashboardWebPart.js",
+          "manifest": "./src/webparts/nintexTaskDelegationDashboard/NintexTaskDelegationDashboardWebPart.manifest.json"
+        }
+      ]
+    }
+  },
+  "externals": {},
+  "localizedResources": {
+    "NintexTaskDelegationDashboardWebPartStrings": "lib/webparts/nintexTaskDelegationDashboard/loc/{locale}.js",
+    "ControlStrings": "node_modules/@pnp/spfx-controls-react/lib/loc/{locale}.js"
+  }
+}

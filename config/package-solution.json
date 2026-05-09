@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "nintex-task-delegation-client-side-solution",
+    "id": "090a981d-6f55-445d-8322-bb3830dedafd",
+    "version": "1.0.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "developer": {
+      "name": "",
+      "websiteUrl": "",
+      "privacyUrl": "",
+      "termsOfUseUrl": "",
+      "mpnId": "Undefined-1.21.1"
+    },
+    "metadata": {
+      "shortDescription": {
+        "default": "nintex-task-delegation description"
+      },
+      "longDescription": {
+        "default": "nintex-task-delegation description"
+      },
+      "screenshotPaths": [],
+      "videoUrl": "",
+      "categories": []
+    },
+    "features": [
+      {
+        "title": "nintex-task-delegation Feature",
+        "description": "The feature that activates elements of the nintex-task-delegation solution.",
+        "id": "80f0212c-3f31-4aa5-8484-23f9a76d8e2d",
+        "version": "1.0.0.0"
+      }
+    ]
+  },
+  "paths": {
+    "zippedPackage": "solution/nintex-task-delegation.sppkg"
+  }
+}

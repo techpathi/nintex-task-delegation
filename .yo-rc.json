@@ -1,0 +1,18 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "22.19.0",
+    "sdksVersions": {},
+    "version": "1.21.1",
+    "libraryName": "nintex-task-delegation",
+    "libraryId": "090a981d-6f55-445d-8322-bb3830dedafd",
+    "environment": "spo",
+    "packageManager": "npm",
+    "solutionName": "nintex-task-delegation",
+    "solutionShortDescription": "nintex-task-delegation description",
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "componentType": "webpart"
+  }
+}
