@@ -3,7 +3,7 @@
   "solution": {
     "name": "nintex-task-delegation-client-side-solution",
     "id": "090a981d-6f55-445d-8322-bb3830dedafd",
-    "version": "1.0.0.0",
+    "version": "1.1.0.0",
     "includeClientSideAssets": true,
     "skipFeatureDeployment": true,
     "isDomainIsolated": false,

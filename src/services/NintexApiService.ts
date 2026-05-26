@@ -34,6 +34,18 @@ export class NintexApiService {
     this.baseUrl = baseUrl ? baseUrl.replace(/\/$/, "") : "";
   }
 
+  /**
+   * Centralised error handler for Nintex API responses.
+   * Shows a browser alert for 401 Unauthorized before throwing.
+   */
+  private async handleResponseError(response: HttpClientResponse, context: string): Promise<never> {
+    const errorMsg = await response.text();
+    if (response.status === 401) {
+      alert(`Unauthorized: Your session has expired or you do not have permission to perform this action. Please contact your administrator.\n\nContext: ${context}`);
+    }
+    throw new Error(`${context}: ${errorMsg}`);
+  }
+
   public async getPendingTasksForUser(userEmail: string, token: string): Promise<INintexTask[]> {
     if (!this.baseUrl) {
       throw new Error("Nintex API Base URL is not configured.");
@@ -50,8 +62,7 @@ export class NintexApiService {
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to fetch tasks from Nintex: ${errorMsg}`);
+      await this.handleResponseError(response, "Failed to fetch tasks from Nintex");
     }
 
     const data = await response.json();
@@ -75,8 +86,7 @@ export class NintexApiService {
     const response: HttpClientResponse = await this.httpClient.post(endpoint, HttpClient.configurations.v1, options);
     
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to delegate task ${taskAssignmentId}: ${errorMsg}`);
+      await this.handleResponseError(response, `Failed to delegate task ${taskAssignmentId}`);
     }
 
     return true;
@@ -96,8 +106,7 @@ export class NintexApiService {
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to find Nintex user for email ${email}: ${errorMsg}`);
+      await this.handleResponseError(response, `Failed to find Nintex user for email ${email}`);
     }
 
     const data = await response.json();
@@ -124,7 +133,8 @@ export class NintexApiService {
         message: message,
         standIns: [
           {
-            id: delegateId
+            id: delegateId,
+            type: "user"
           }
         ]
       })
@@ -133,8 +143,7 @@ export class NintexApiService {
     const response: HttpClientResponse = await this.httpClient.post(endpoint, HttpClient.configurations.v1, options);
     
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to create auto delegation: ${errorMsg}`);
+      await this.handleResponseError(response, "Failed to create auto delegation");
     }
 
     return true;
@@ -154,8 +163,7 @@ export class NintexApiService {
     const response: HttpClientResponse = await this.httpClient.fetch(endpoint, HttpClient.configurations.v1, options);
     
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to delete auto delegation: ${errorMsg}`);
+      await this.handleResponseError(response, "Failed to delete auto delegation");
     }
 
     return true;
@@ -177,7 +185,8 @@ export class NintexApiService {
         message: message,
         standIns: [
           {
-            id: delegateId
+            id: delegateId,
+            type: "user"
           }
         ]
       }),
@@ -187,8 +196,7 @@ export class NintexApiService {
     const response: HttpClientResponse = await this.httpClient.fetch(endpoint, HttpClient.configurations.v1, options);
     
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to update auto delegation: ${errorMsg}`);
+      await this.handleResponseError(response, "Failed to update auto delegation");
     }
 
     return true;
@@ -206,8 +214,7 @@ export class NintexApiService {
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
-      const errorMsg = await response.text();
-      throw new Error(`Failed to fetch auto delegations: ${errorMsg}`);
+      await this.handleResponseError(response, "Failed to fetch auto delegations");
     }
 
     const data = await response.json();
@@ -227,7 +234,10 @@ export class NintexApiService {
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
-      console.error("Failed to fetch Nintex users", await response.text());
+      if (response.status === 401) {
+        alert("Unauthorized: Your session has expired or you do not have permission to search Nintex users. Please contact your administrator.");
+      }
+      console.error("Failed to fetch Nintex users", response.status);
       return [];
     }
 
@@ -248,7 +258,10 @@ export class NintexApiService {
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
     if (!response.ok) {
-      console.error(`Failed to fetch Nintex user by id ${id}`, await response.text());
+      if (response.status === 401) {
+        alert("Unauthorized: Your session has expired or you do not have permission to fetch Nintex user details. Please contact your administrator.");
+      }
+      console.error(`Failed to fetch Nintex user by id ${id}`, response.status);
       return undefined;
     }
 
