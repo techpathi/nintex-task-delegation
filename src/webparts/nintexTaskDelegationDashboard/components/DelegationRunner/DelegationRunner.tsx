@@ -1,9 +1,32 @@
 import * as React from 'react';
 import { IDelegationRunnerProps } from './IDelegationRunnerProps';
-import { NormalPeoplePicker, IPersonaProps, PrimaryButton, DefaultButton, ProgressIndicator, MessageBar, MessageBarType, DetailsList, IColumn, Dialog, DialogType, DialogFooter, Icon, IconButton, TextField, DatePicker, Spinner, SpinnerSize } from '@fluentui/react';
+import { 
+  NormalPeoplePicker, 
+  IPersonaProps, 
+  PrimaryButton, 
+  DefaultButton, 
+  ProgressIndicator, 
+  MessageBar, 
+  MessageBarType, 
+  DetailsList, 
+  IColumn, 
+  Dialog, 
+  DialogType, 
+  DialogFooter, 
+  Icon, 
+  IconButton, 
+  TextField, 
+  DatePicker, 
+  Spinner, 
+  SpinnerSize,
+  Pivot,
+  PivotItem
+} from '@fluentui/react';
 import { TokenService } from '../../../../services/TokenService';
 import { NintexApiService, INintexAutoDelegation, INintexUser } from '../../../../services/NintexApiService';
 import { SPHttpClient } from '@microsoft/sp-http';
+
+export type DelegationStatusFilter = 'Active' | 'Scheduled' | 'Expired' | 'All';
 
 export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [delegateUser, setDelegateUser] = React.useState<IPersonaProps | undefined>(undefined);
@@ -26,66 +49,21 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState<boolean>(false);
   const [itemToDelete, setItemToDelete] = React.useState<INintexAutoDelegation | null>(null);
 
-  const userCache = React.useRef<{ [key: string]: string }>({});
+  // Status Filter and Pagination State
+  const [statusFilter, setStatusFilter] = React.useState<DelegationStatusFilter>('Active');
+  const [currentPage, setCurrentPage] = React.useState<number>(1);
+  const pageSize = 20;
 
   const loadDelegations = async (apiService: NintexApiService, token: string): Promise<void> => {
     const allDelegations = await apiService.listAutoDelegations(token);
-    const limitDays = props.recentDaysLimit || 100;
-    const pastDate = new Date();
-    pastDate.setDate(pastDate.getDate() - limitDays);
     
-    const filtered = allDelegations.filter((d: INintexAutoDelegation) => {
-      const created = d.createdDate ? new Date(d.createdDate) : null;
-      const updated = d.updatedDate ? new Date(d.updatedDate) : null;
-      return (created && created >= pastDate) || (updated && updated >= pastDate) || (!created && !updated);
-    });
+    // Set fromUserDisplay to email (userId) directly without user profile API calls
+    const processed = allDelegations.map((d: INintexAutoDelegation) => ({
+      ...d,
+      fromUserDisplay: d.userId
+    }));
 
-    for (let i = 0; i < filtered.length; i++) {
-      const uId = filtered[i].userId;
-      if (uId) {
-        if (!userCache.current[uId]) {
-          let display = uId;
-          try {
-            const u = await apiService.getNintexUserById(uId, token);
-            if (u && u.email) {
-              display = u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : u.email;
-            }
-          } catch {
-            // Error gracefully ignored
-          }
-          // eslint-disable-next-line require-atomic-updates
-          userCache.current[uId] = display;
-        }
-        filtered[i].fromUserDisplay = userCache.current[uId];
-      }
-
-      // Resolve Stand-in display name
-      if (filtered[i].standIns && filtered[i].standIns.length > 0) {
-        const standIn = filtered[i].standIns[0];
-        if (!standIn.firstName) {
-          if (!userCache.current[standIn.id]) {
-            try {
-              const u = await apiService.getNintexUserById(standIn.id, token);
-              if (u) {
-                standIn.firstName = u.firstName;
-                standIn.lastName = u.lastName;
-                // eslint-disable-next-line require-atomic-updates
-                userCache.current[standIn.id] = u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : (u.email || standIn.id);
-              }
-            } catch { /* ignore */ }
-          } else {
-             // If we have it in cache, we should ideally apply it back to the standIn object
-             // to make the onRender logic work consistently
-             const cached = userCache.current[standIn.id];
-             if (cached && cached !== standIn.id) {
-               standIn.firstName = cached; // Hacky but works for display
-             }
-          }
-        }
-      }
-    }
-
-    setDelegations(filtered);
+    setDelegations(processed);
   };
 
   React.useEffect(() => {
@@ -151,24 +129,28 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       setTimeTo("00:00");
     }
     setMessage(item.message || '');
-    
-    if (item.standIns && item.standIns.length > 0) {
-      setDelegateUser({
-        id: item.standIns[0].id,
-        text: item.standIns[0].firstName ? `${item.standIns[0].firstName} ${item.standIns[0].lastName}` : item.standIns[0].emails?.[0] || item.standIns[0].id,
-        secondaryText: item.standIns[0].emails?.[0] || ''
-      });
-    } else {
-      setDelegateUser(undefined);
-    }
 
+    // Display Email only without user profile calls
     if (item.userId) {
       setOooUser({
         id: item.userId,
-        text: item.fromUserDisplay || item.userId
+        text: item.userId,
+        secondaryText: item.userId
       });
     } else {
       setOooUser(undefined);
+    }
+
+    if (item.standIns && item.standIns.length > 0) {
+      const standIn = item.standIns[0];
+      const delegateEmail = standIn.emails?.[0] || standIn.id;
+      setDelegateUser({
+        id: standIn.id,
+        text: delegateEmail,
+        secondaryText: delegateEmail
+      });
+    } else {
+      setDelegateUser(undefined);
     }
     
     setErrorMsg("");
@@ -210,7 +192,9 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       setErrorMsg("Please select a Delegate User.");
       return;
     }
-    if (oooUser.id === delegateUser.id) {
+    if (oooUser.id === delegateUser.id || 
+        (oooUser.secondaryText && delegateUser.secondaryText && 
+         oooUser.secondaryText.toLowerCase() === delegateUser.secondaryText.toLowerCase())) {
       setErrorMsg("Delegate from and Delegate to users cannot be the same.");
       return;
     }
@@ -247,23 +231,33 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
 
     setIsDelegating(true);
     setProgress(0);
-    setProgressDescription("Fetching your Nintex user ID...");
+    setProgressDescription("Configuring auto-delegation rule...");
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
 
-      const delegatorId = oooUser.id as string;
+      const delegatorEmail = oooUser.secondaryText as string;
+      const delegateEmail = delegateUser.secondaryText as string;
 
-      setProgressDescription("Configuring auto-delegation rule...");
+      if (!delegatorEmail) {
+        setErrorMsg("Could not determine the email address for the 'Delegate from' user. Please re-select the user.");
+        setIsDelegating(false);
+        return;
+      }
+      if (!delegateEmail) {
+        setErrorMsg("Could not determine the email address for the 'Delegate to' user. Please re-select the user.");
+        setIsDelegating(false);
+        return;
+      }
 
       if (editingId) {
         setProgressDescription("Updating auto-delegation rule...");
-        await nintexApiService.updateAutoDelegation(editingId, delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message);
+        await nintexApiService.updateAutoDelegation(editingId, delegatorEmail, delegateEmail, fromDateObj, toDateObj, nintexToken, message);
         setSuccessMsg(`Successfully updated auto-delegation rule!`);
       } else {
         setProgressDescription("Configuring auto-delegation rule...");
-        await nintexApiService.createAutoDelegation(delegatorId, delegateUser.id as string, fromDateObj, toDateObj, nintexToken, message);
+        await nintexApiService.createAutoDelegation(delegatorEmail, delegateEmail, fromDateObj, toDateObj, nintexToken, message);
         setSuccessMsg(`Successfully created auto-delegation rule!`);
       }
       
@@ -284,7 +278,17 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       setMessage("");
       setProgress(0);
     } catch (err) {
-      setErrorMsg(err.message || "An unexpected error occurred.");
+      const errMsg: string = err.message || "";
+      if (errMsg.indexOf("UserNotFound") !== -1 || errMsg.indexOf("is not found") !== -1) {
+        setErrorMsg(
+          "One of the selected users has not been provisioned in the Nintex workflow tasks system. " +
+          "The user must interact with Nintex (e.g. be assigned a task) before they can be used for auto-delegation. " +
+          "Please contact your Nintex administrator."
+        );
+      } else {
+        setErrorMsg(errMsg || "An unexpected error occurred.");
+      }
+
     } finally {
       setIsDelegating(false);
     }
@@ -294,14 +298,14 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     { 
       key: 'col0', 
       name: 'Delegate from', 
-      fieldName: 'fromUserDisplay', 
-      minWidth: 150, 
-      maxWidth: 200, 
+      fieldName: 'userId', 
+      minWidth: 160, 
+      maxWidth: 220, 
       onRender: (item) => {
         return (
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Icon iconName="Contact" style={{ marginRight: '8px' }} />
-            <span>{item.fromUserDisplay || item.userId}</span>
+            <span>{item.userId}</span>
           </div>
         );
       }
@@ -310,11 +314,11 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       key: 'col3', 
       name: 'Delegate to', 
       fieldName: 'standIns', 
-      minWidth: 150, 
-      maxWidth: 200, 
+      minWidth: 160, 
+      maxWidth: 220, 
       onRender: (item) => {
         const standIn = item.standIns?.[0];
-        const displayName = standIn ? (standIn.firstName ? `${standIn.firstName} ${standIn.lastName || ''}`.trim() : (standIn.emails?.[0] || standIn.id)) : '';
+        const displayName = standIn ? (standIn.emails?.[0] || standIn.id) : '';
         return (
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Icon iconName="Contact" style={{ marginRight: '8px' }} />
@@ -350,8 +354,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       key: 'col4', 
       name: 'Message', 
       fieldName: 'message', 
-      minWidth: 200, 
-      maxWidth: 300 
+      minWidth: 180, 
+      maxWidth: 280 
     },
     { 
       key: 'col5', 
@@ -415,6 +419,49 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     }
   ];
 
+  // Status computation and filtering logic
+  const getItemStatus = (item: INintexAutoDelegation): 'Active' | 'Scheduled' | 'Expired' => {
+    const n = new Date();
+    const f = new Date(item.effectiveFrom);
+    const t = new Date(item.effectiveTo);
+    if (n >= f && n <= t) return 'Active';
+    if (n < f) return 'Scheduled';
+    return 'Expired';
+  };
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const activeItems = delegations.filter(item => getItemStatus(item) === 'Active');
+  const scheduledItems = delegations.filter(item => getItemStatus(item) === 'Scheduled');
+  const expiredItems = delegations.filter(item => {
+    if (getItemStatus(item) !== 'Expired') return false;
+    const to = new Date(item.effectiveTo);
+    return to >= thirtyDaysAgo;
+  });
+  const allItems = delegations.filter(item => {
+    if (getItemStatus(item) === 'Expired') {
+      const to = new Date(item.effectiveTo);
+      return to >= thirtyDaysAgo;
+    }
+    return true;
+  });
+
+  let filteredDelegations: INintexAutoDelegation[] = [];
+  if (statusFilter === 'Active') {
+    filteredDelegations = activeItems;
+  } else if (statusFilter === 'Scheduled') {
+    filteredDelegations = scheduledItems;
+  } else if (statusFilter === 'Expired') {
+    filteredDelegations = expiredItems;
+  } else {
+    filteredDelegations = allItems;
+  }
+
+  const totalPages = Math.ceil(filteredDelegations.length / pageSize) || 1;
+  const validPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const pagedItems = filteredDelegations.slice((validPage - 1) * pageSize, validPage * pageSize);
+
   const bufferMs = (props.bufferMinutes !== undefined ? props.bufferMinutes : 5) * 60000;
   const now = new Date();
   const earliestAllowed = new Date(now.getTime() + bufferMs);
@@ -453,7 +500,22 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
 
   return (
     <div style={{ padding: '20px', backgroundColor: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '15px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
+        <Pivot 
+          selectedKey={statusFilter} 
+          onLinkClick={(item) => {
+            if (item && item.props.itemKey) {
+              setStatusFilter(item.props.itemKey as DelegationStatusFilter);
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <PivotItem headerText="Active" itemKey="Active" itemCount={activeItems.length} />
+          <PivotItem headerText="Scheduled" itemKey="Scheduled" itemCount={scheduledItems.length} />
+          <PivotItem headerText="Expired (Last 30 Days)" itemKey="Expired" itemCount={expiredItems.length} />
+          <PivotItem headerText="All" itemKey="All" itemCount={allItems.length} />
+        </Pivot>
+
         <PrimaryButton 
           text="Add Auto Task Delegation" 
           onClick={async () => {
@@ -469,43 +531,59 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
             setSuccessMsg("");
             setIsPanelOpen(true);
 
-            try {
-              const currentEmail = props.context.pageContext.user.email;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
-              const users = await nintexApiService.searchNintexUsers(currentEmail, nintexToken);
-              const matchingUsers = users.filter((u: INintexUser) => u.email.toLowerCase() === currentEmail.toLowerCase());
-              if (matchingUsers.length > 0) {
-                setOooUser({
-                  id: matchingUsers[0].id,
-                  text: matchingUsers[0].firstName ? `${matchingUsers[0].firstName} ${matchingUsers[0].lastName}` : matchingUsers[0].email,
-                  secondaryText: matchingUsers[0].email
-                });
-              }
-            } catch {
-              // Ignore initialization error
+            const currentEmail = props.context.pageContext.user.email;
+            if (currentEmail) {
+              setOooUser({
+                id: currentEmail,
+                text: currentEmail,
+                secondaryText: currentEmail
+              });
             }
           }} 
           disabled={!nintexToken} 
         />
       </div>
 
-
-
       <div>
         {isLoading ? (
           <div style={{ padding: '40px 0', display: 'flex', justifyContent: 'center' }}>
             <Spinner size={SpinnerSize.large} label="Loading delegations..." />
           </div>
-        ) : delegations.length > 0 ? (
-          <DetailsList
-            items={delegations}
-            columns={delegationColumns}
-            setKey="set"
-            selectionMode={0}
-          />
+        ) : filteredDelegations.length > 0 ? (
+          <>
+            <DetailsList
+              items={pagedItems}
+              columns={delegationColumns}
+              setKey="set"
+              selectionMode={0}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', padding: '10px 0', borderTop: '1px solid #edebe9' }}>
+              <span style={{ fontSize: '13px', color: '#605e5c' }}>
+                Showing {(validPage - 1) * pageSize + 1} - {Math.min(validPage * pageSize, filteredDelegations.length)} of {filteredDelegations.length} items
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IconButton
+                  iconProps={{ iconName: 'ChevronLeft' }}
+                  title="Previous Page"
+                  ariaLabel="Previous Page"
+                  disabled={validPage <= 1}
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                />
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                  Page {validPage} of {totalPages}
+                </span>
+                <IconButton
+                  iconProps={{ iconName: 'ChevronRight' }}
+                  title="Next Page"
+                  ariaLabel="Next Page"
+                  disabled={validPage >= totalPages}
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                />
+              </div>
+            </div>
+          </>
         ) : (
-          <p>No auto-delegations found.</p>
+          <p style={{ padding: '20px 0', color: '#605e5c' }}>No {statusFilter.toLowerCase()} auto-delegations found.</p>
         )}
       </div>
 

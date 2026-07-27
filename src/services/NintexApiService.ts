@@ -117,7 +117,7 @@ export class NintexApiService {
     return data.id;
   }
 
-  public async createAutoDelegation(delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
+  public async createAutoDelegation(delegatorEmail: string, delegateEmail: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
     const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations`;
     
     const options: IHttpClientOptions = {
@@ -126,14 +126,16 @@ export class NintexApiService {
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
+      // The tasks API (/workflows/v2) expects email addresses as user identifiers,
+      // NOT the auth0| tenant user IDs returned by /tenants/v1/users.
       body: JSON.stringify({
-        userId: delegatorId,
+        userId: delegatorEmail,
         effectiveFrom: startDateTime.toISOString(),
         effectiveTo: endDateTime.toISOString(),
         message: message,
         standIns: [
           {
-            id: delegateId,
+            id: delegateEmail,
             type: "user"
           }
         ]
@@ -169,7 +171,7 @@ export class NintexApiService {
     return true;
   }
 
-  public async updateAutoDelegation(delegationId: string, delegatorId: string, delegateId: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
+  public async updateAutoDelegation(delegationId: string, delegatorEmail: string, delegateEmail: string, startDateTime: Date, endDateTime: Date, token: string, message: string = ""): Promise<boolean> {
     const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations/${delegationId}`;
     
     const options: IHttpClientOptions = {
@@ -178,14 +180,16 @@ export class NintexApiService {
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
+      // The tasks API (/workflows/v2) expects email addresses as user identifiers,
+      // NOT the auth0| tenant user IDs returned by /tenants/v1/users.
       body: JSON.stringify({
-        userId: delegatorId,
+        userId: delegatorEmail,
         effectiveFrom: startDateTime.toISOString(),
         effectiveTo: endDateTime.toISOString(),
         message: message,
         standIns: [
           {
-            id: delegateId,
+            id: delegateEmail,
             type: "user"
           }
         ]
@@ -242,7 +246,17 @@ export class NintexApiService {
     }
 
     const data = await response.json();
-    return Array.isArray(data) ? data : data.users || [];
+    const rawUsers: INintexUser[] = Array.isArray(data) ? data : data.users || [];
+
+    const lower = filterText.trim().toLowerCase();
+    if (!lower) return rawUsers;
+    const terms = lower.split(/\s+/).filter(t => t.length > 0);
+
+    return rawUsers.filter((u: INintexUser) => {
+      const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      return terms.every(term => fullName.indexOf(term) !== -1 || email.indexOf(term) !== -1);
+    });
   }
 
   public async getNintexUserById(id: string, token: string): Promise<INintexUser | undefined> {
