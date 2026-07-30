@@ -19,14 +19,61 @@ import {
   DatePicker, 
   Spinner, 
   SpinnerSize,
-  Pivot,
-  PivotItem
+  ContextualMenu,
+  IContextualMenuItem,
+  DirectionalHint,
+  Persona,
+  PersonaSize,
+  TooltipHost
 } from '@fluentui/react';
 import { TokenService } from '../../../../services/TokenService';
 import { NintexApiService, INintexAutoDelegation, INintexUser } from '../../../../services/NintexApiService';
 import { SPHttpClient } from '@microsoft/sp-http';
 
 export type DelegationStatusFilter = 'Active' | 'Scheduled' | 'Expired' | 'All';
+
+interface IOverflowTextProps {
+  text: string;
+  style?: React.CSSProperties;
+  className?: string;
+}
+
+const OverflowText: React.FC<IOverflowTextProps> = ({ text, style, className }) => {
+  const [isOverflowing, setIsOverflowing] = React.useState<boolean>(false);
+  const spanRef = React.useRef<HTMLSpanElement>(null);
+
+  const checkOverflow = (): void => {
+    if (spanRef.current) {
+      const hasOverflow = spanRef.current.scrollWidth > spanRef.current.clientWidth;
+      if (hasOverflow !== isOverflowing) {
+        setIsOverflowing(hasOverflow);
+      }
+    }
+  };
+
+  return (
+    <TooltipHost
+      content={isOverflowing ? text : ''}
+      styles={{ root: { display: 'block', overflow: 'hidden', minWidth: 0 } }}
+    >
+      <span
+        ref={spanRef}
+        onMouseEnter={checkOverflow}
+        style={{
+          display: 'block',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          minWidth: 0,
+          ...style
+        }}
+        className={className}
+      >
+        {text}
+      </span>
+    </TooltipHost>
+  );
+};
 
 export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [delegateUser, setDelegateUser] = React.useState<IPersonaProps | undefined>(undefined);
@@ -46,24 +93,70 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const [errorMsg, setErrorMsg] = React.useState<string>("");
   const [successMsg, setSuccessMsg] = React.useState<string>("");
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [initialFormState, setInitialFormState] = React.useState<{ dateFrom: string; timeFrom: string; dateTo: string; timeTo: string; message: string } | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState<boolean>(false);
   const [itemToDelete, setItemToDelete] = React.useState<INintexAutoDelegation | null>(null);
+
+  const userCacheRef = React.useRef<{ [userId: string]: INintexUser }>({});
 
   // Status Filter and Pagination State
   const [statusFilter, setStatusFilter] = React.useState<DelegationStatusFilter>('Active');
   const [currentPage, setCurrentPage] = React.useState<number>(1);
   const pageSize = 20;
 
-  const loadDelegations = async (apiService: NintexApiService, token: string): Promise<void> => {
-    const allDelegations = await apiService.listAutoDelegations(token);
-    
-    // Set fromUserDisplay to email (userId) directly without user profile API calls
-    const processed = allDelegations.map((d: INintexAutoDelegation) => ({
-      ...d,
-      fromUserDisplay: d.userId
-    }));
+  // Contextual menu state for column filter
+  const [contextualMenuTarget, setContextualMenuTarget] = React.useState<MouseEvent | HTMLElement | undefined>(undefined);
+  const [showContextMenu, setShowContextMenu] = React.useState<boolean>(false);
 
-    setDelegations(processed);
+  // User detail dialog state
+  const [isUserDetailOpen, setIsUserDetailOpen] = React.useState<boolean>(false);
+  const [userDetailLoading, setUserDetailLoading] = React.useState<boolean>(false);
+  const [userDetailError, setUserDetailError] = React.useState<string>("");
+  const [selectedNintexUser, setSelectedNintexUser] = React.useState<INintexUser | null>(null);
+  const [selectedUserId, setSelectedUserId] = React.useState<string>("");
+
+  const handleGetUserDetails = async (userId: string): Promise<void> => {
+    setSelectedUserId(userId);
+    setSelectedNintexUser(null);
+    setUserDetailError("");
+    setUserDetailLoading(true);
+    setIsUserDetailOpen(true);
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
+      const user = await nintexApiService.getNintexUserById(userId, nintexToken);
+      if (user) {
+        if (user.id) {
+          userCacheRef.current[user.id] = user;
+        }
+        setSelectedNintexUser(user);
+      } else {
+        setUserDetailError(`No user details found for ID: ${userId}`);
+      }
+    } catch (err) {
+      console.error("Error fetching user details:", err);
+      setUserDetailError(err.message || "Failed to fetch user details.");
+    } finally {
+      setUserDetailLoading(false);
+    }
+  };
+
+  const loadDelegations = async (apiService: NintexApiService, token: string, status: DelegationStatusFilter = 'Active'): Promise<void> => {
+    setIsLoading(true);
+    try {
+      const allDelegations = await apiService.listAutoDelegations(token, status);
+      
+      // Set fromUserDisplay to email (userId) directly without user profile API calls
+      const processed = allDelegations.map((d: INintexAutoDelegation) => ({
+        ...d,
+        fromUserDisplay: d.userId
+      }));
+
+      setDelegations(processed);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   React.useEffect(() => {
@@ -77,7 +170,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
         
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
-        await loadDelegations(nintexApiService, token);
+        await loadDelegations(nintexApiService, token, 'Active');
       } catch (err) {
         console.error("Error fetching initial token:", err);
         setErrorMsg("Failed to initialize Nintex API token.");
@@ -94,6 +187,11 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
       const users = await nintexApiService.searchNintexUsers(filterText, nintexToken);
+      users.forEach((u: INintexUser) => {
+        if (u.id) {
+          userCacheRef.current[u.id] = u;
+        }
+      });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return users
         .filter((u: INintexUser) => ignoreIds.indexOf(u.id) === -1)
@@ -111,32 +209,71 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
 
   const handleEditClick = (item: INintexAutoDelegation): void => {
     setEditingId(item.id);
+    let initDateFromStr = "";
+    let initTimeFromStr = "00:00";
     if (item.effectiveFrom) {
       const d = new Date(item.effectiveFrom);
+      initDateFromStr = d.toDateString();
+      initTimeFromStr = `${('0' + d.getHours()).slice(-2)}:${('0' + d.getMinutes()).slice(-2)}`;
       setDateFrom(d);
-      setTimeFrom(`${('0' + d.getHours()).slice(-2)}:${('0' + d.getMinutes()).slice(-2)}`);
+      setTimeFrom(initTimeFromStr);
     } else {
       setDateFrom(undefined);
       setTimeFrom("00:00");
     }
     
+    let initDateToStr = "";
+    let initTimeToStr = "00:00";
     if (item.effectiveTo) {
       const d = new Date(item.effectiveTo);
+      initDateToStr = d.toDateString();
+      initTimeToStr = `${('0' + d.getHours()).slice(-2)}:${('0' + d.getMinutes()).slice(-2)}`;
       setDateTo(d);
-      setTimeTo(`${('0' + d.getHours()).slice(-2)}:${('0' + d.getMinutes()).slice(-2)}`);
+      setTimeTo(initTimeToStr);
     } else {
       setDateTo(undefined);
       setTimeTo("00:00");
     }
-    setMessage(item.message || '');
+    const initMsg = item.message || '';
+    setMessage(initMsg);
 
-    // Display Email only without user profile calls
+    setInitialFormState({
+      dateFrom: initDateFromStr,
+      timeFrom: initTimeFromStr,
+      dateTo: initDateToStr,
+      timeTo: initTimeToStr,
+      message: initMsg
+    });
+
+    // Display Email - resolve on demand if userId is a Nintex user ID
     if (item.userId) {
+      const isEmail = item.userId.indexOf('@') !== -1;
+      const cachedUser = userCacheRef.current[item.userId];
+      const initialDisplayEmail = isEmail ? item.userId : (cachedUser?.email || item.userId);
+
       setOooUser({
         id: item.userId,
-        text: item.userId,
-        secondaryText: item.userId
+        text: initialDisplayEmail,
+        secondaryText: initialDisplayEmail
       });
+
+      // If it's not an email and not yet cached, resolve the user email on demand
+      if (!isEmail && !cachedUser && nintexToken) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
+        nintexApiService.getNintexUserById(item.userId, nintexToken).then(user => {
+          if (user && user.email) {
+            userCacheRef.current[item.userId] = user;
+            setOooUser({
+              id: item.userId,
+              text: user.email,
+              secondaryText: user.email
+            });
+          }
+        }).catch(err => {
+          console.error("Error resolving user email for edit dialog:", err);
+        });
+      }
     } else {
       setOooUser(undefined);
     }
@@ -161,6 +298,17 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
   const handleDeleteClick = (item: INintexAutoDelegation): void => {
     setItemToDelete(item);
     setIsDeleteDialogOpen(true);
+
+    if (item.userId && item.userId.indexOf('@') === -1 && !userCacheRef.current[item.userId] && nintexToken) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
+      nintexApiService.getNintexUserById(item.userId, nintexToken).then(user => {
+        if (user && user.email && user.id) {
+          const currentCache = userCacheRef.current;
+          currentCache[user.id] = user;
+        }
+      }).catch(console.error);
+    }
   };
 
   const confirmDelete = async (): Promise<void> => {
@@ -170,7 +318,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
       await nintexApiService.deleteAutoDelegation(itemToDelete.id, nintexToken);
-      await loadDelegations(nintexApiService, nintexToken);
+      await loadDelegations(nintexApiService, nintexToken, statusFilter);
       setIsDeleteDialogOpen(false);
       setItemToDelete(null);
     } catch (err) {
@@ -237,11 +385,12 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
 
-      const delegatorEmail = oooUser.secondaryText as string;
-      const delegateEmail = delegateUser.secondaryText as string;
+      const delegatorUserId = (oooUser.id || oooUser.secondaryText) as string;
+      const delegatorEmail = (oooUser.secondaryText || oooUser.id) as string;
+      const delegateEmail = (delegateUser.secondaryText || delegateUser.id) as string;
 
-      if (!delegatorEmail) {
-        setErrorMsg("Could not determine the email address for the 'Delegate from' user. Please re-select the user.");
+      if (!delegatorUserId || !delegatorEmail) {
+        setErrorMsg("Could not determine the 'Delegate from' user. Please re-select the user.");
         setIsDelegating(false);
         return;
       }
@@ -253,7 +402,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
 
       if (editingId) {
         setProgressDescription("Updating auto-delegation rule...");
-        await nintexApiService.updateAutoDelegation(editingId, delegatorEmail, delegateEmail, fromDateObj, toDateObj, nintexToken, message);
+        // Pass delegatorUserId (actual Nintex User ID, e.g. auth0|...) for update payload
+        await nintexApiService.updateAutoDelegation(editingId, delegatorUserId, delegateEmail, fromDateObj, toDateObj, nintexToken, message);
         setSuccessMsg(`Successfully updated auto-delegation rule!`);
       } else {
         setProgressDescription("Configuring auto-delegation rule...");
@@ -264,7 +414,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       setProgress(1);
       setProgressDescription("Completed!");
       
-      await loadDelegations(nintexApiService, nintexToken);
+      await loadDelegations(nintexApiService, nintexToken, statusFilter);
 
       setIsPanelOpen(false);
       setEditingId(null);
@@ -301,11 +451,27 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       fieldName: 'userId', 
       minWidth: 160, 
       maxWidth: 220, 
-      onRender: (item) => {
+      onRender: (item: INintexAutoDelegation) => {
         return (
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <Icon iconName="Contact" style={{ marginRight: '8px' }} />
-            <span>{item.userId}</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Icon iconName="Contact" style={{ marginRight: '8px', flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.userId}>{item.userId}</span>
+            </div>
+            <TooltipHost content="Get user details?">
+              <IconButton
+                iconProps={{ iconName: 'Info' }}
+                title="Get user details"
+                ariaLabel="Get user details"
+                onClick={(e: React.MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
+                  e.stopPropagation();
+                  handleGetUserDetails(item.userId).catch(console.error);
+                }}
+                styles={{
+                  root: { height: '24px', width: '24px', marginLeft: '4px' }
+                }}
+              />
+            </TooltipHost>
           </div>
         );
       }
@@ -361,8 +527,15 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
       key: 'col5', 
       name: 'Status', 
       fieldName: 'status', 
-      minWidth: 80, 
-      maxWidth: 100, 
+      minWidth: 90, 
+      maxWidth: 110, 
+      isFiltered: true,
+      onColumnClick: (ev?: React.MouseEvent<HTMLElement>) => {
+        if (ev) {
+          setContextualMenuTarget(ev.currentTarget);
+          setShowContextMenu(true);
+        }
+      },
       onRender: (item) => {
         const now = new Date();
         const from = new Date(item.effectiveFrom);
@@ -419,44 +592,8 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     }
   ];
 
-  // Status computation and filtering logic
-  const getItemStatus = (item: INintexAutoDelegation): 'Active' | 'Scheduled' | 'Expired' => {
-    const n = new Date();
-    const f = new Date(item.effectiveFrom);
-    const t = new Date(item.effectiveTo);
-    if (n >= f && n <= t) return 'Active';
-    if (n < f) return 'Scheduled';
-    return 'Expired';
-  };
-
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-  const activeItems = delegations.filter(item => getItemStatus(item) === 'Active');
-  const scheduledItems = delegations.filter(item => getItemStatus(item) === 'Scheduled');
-  const expiredItems = delegations.filter(item => {
-    if (getItemStatus(item) !== 'Expired') return false;
-    const to = new Date(item.effectiveTo);
-    return to >= thirtyDaysAgo;
-  });
-  const allItems = delegations.filter(item => {
-    if (getItemStatus(item) === 'Expired') {
-      const to = new Date(item.effectiveTo);
-      return to >= thirtyDaysAgo;
-    }
-    return true;
-  });
-
-  let filteredDelegations: INintexAutoDelegation[] = [];
-  if (statusFilter === 'Active') {
-    filteredDelegations = activeItems;
-  } else if (statusFilter === 'Scheduled') {
-    filteredDelegations = scheduledItems;
-  } else if (statusFilter === 'Expired') {
-    filteredDelegations = expiredItems;
-  } else {
-    filteredDelegations = allItems;
-  }
+  // Data is already filtered by API service
+  const filteredDelegations = delegations;
 
   const totalPages = Math.ceil(filteredDelegations.length / pageSize) || 1;
   const validPage = Math.min(Math.max(currentPage, 1), totalPages);
@@ -498,28 +635,65 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
     endMinTime = endMinTime && endMinTime > timeFrom ? endMinTime : timeFrom;
   }
 
+  const currentDateFromStr = dateFrom ? dateFrom.toDateString() : '';
+  const currentDateToStr = dateTo ? dateTo.toDateString() : '';
+  const currentMsg = message || '';
+
+  const hasFormChanged = !editingId || (
+    initialFormState !== null && (
+      currentDateFromStr !== initialFormState.dateFrom ||
+      timeFrom !== initialFormState.timeFrom ||
+      currentDateToStr !== initialFormState.dateTo ||
+      timeTo !== initialFormState.timeTo ||
+      currentMsg !== initialFormState.message
+    )
+  );
+
+  const onFilterChange = async (newStatus: DelegationStatusFilter): Promise<void> => {
+    setStatusFilter(newStatus);
+    setCurrentPage(1);
+    setShowContextMenu(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nintexApiService = new NintexApiService(props.context.httpClient as any, props.nintexApiBaseUrl);
+    await loadDelegations(nintexApiService, nintexToken, newStatus);
+  };
+
+  const menuItems: IContextualMenuItem[] = [
+    { key: 'Active', text: 'Active', onClick: () => { onFilterChange('Active').catch(console.error); }, canCheck: true, isChecked: statusFilter === 'Active' },
+    { key: 'Scheduled', text: 'Scheduled', onClick: () => { onFilterChange('Scheduled').catch(console.error); }, canCheck: true, isChecked: statusFilter === 'Scheduled' },
+    { key: 'Expired', text: 'Expired (Last 30 Days)', onClick: () => { onFilterChange('Expired').catch(console.error); }, canCheck: true, isChecked: statusFilter === 'Expired' },
+    { key: 'All', text: 'All', onClick: () => { onFilterChange('All').catch(console.error); }, canCheck: true, isChecked: statusFilter === 'All' }
+  ];
+
   return (
     <div style={{ padding: '20px', backgroundColor: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+      {showContextMenu && (
+        <ContextualMenu
+          items={menuItems}
+          hidden={!showContextMenu}
+          target={contextualMenuTarget}
+          onItemClick={() => setShowContextMenu(false)}
+          onDismiss={() => setShowContextMenu(false)}
+          directionalHint={DirectionalHint.bottomLeftEdge}
+        />
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
-        <Pivot 
-          selectedKey={statusFilter} 
-          onLinkClick={(item) => {
-            if (item && item.props.itemKey) {
-              setStatusFilter(item.props.itemKey as DelegationStatusFilter);
-              setCurrentPage(1);
-            }
-          }}
-        >
-          <PivotItem headerText="Active" itemKey="Active" itemCount={activeItems.length} />
-          <PivotItem headerText="Scheduled" itemKey="Scheduled" itemCount={scheduledItems.length} />
-          <PivotItem headerText="Expired (Last 30 Days)" itemKey="Expired" itemCount={expiredItems.length} />
-          <PivotItem headerText="All" itemKey="All" itemCount={allItems.length} />
-        </Pivot>
-
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '13px', color: '#605e5c' }}>Filter:</span>
+          <DefaultButton
+            text={`Status: ${statusFilter === 'Expired' ? 'Expired (Last 30 Days)' : statusFilter}`}
+            iconProps={{ iconName: 'Filter' }}
+            onClick={(ev: React.MouseEvent<HTMLElement>) => {
+              setContextualMenuTarget(ev.currentTarget);
+              setShowContextMenu(true);
+            }}
+          />
+        </div>
         <PrimaryButton 
           text="Add Auto Task Delegation" 
-          onClick={async () => {
+          onClick={() => {
             setEditingId(null);
+            setInitialFormState(null);
             setDelegateUser(undefined);
             setOooUser(undefined);
             setDateFrom(undefined);
@@ -530,15 +704,6 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
             setErrorMsg("");
             setSuccessMsg("");
             setIsPanelOpen(true);
-
-            const currentEmail = props.context.pageContext.user.email;
-            if (currentEmail) {
-              setOooUser({
-                id: currentEmail,
-                text: currentEmail,
-                secondaryText: currentEmail
-              });
-            }
           }} 
           disabled={!nintexToken} 
         />
@@ -549,7 +714,7 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
           <div style={{ padding: '40px 0', display: 'flex', justifyContent: 'center' }}>
             <Spinner size={SpinnerSize.large} label="Loading delegations..." />
           </div>
-        ) : filteredDelegations.length > 0 ? (
+        ) : (
           <>
             <DetailsList
               items={pagedItems}
@@ -557,33 +722,38 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
               setKey="set"
               selectionMode={0}
             />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', padding: '10px 0', borderTop: '1px solid #edebe9' }}>
-              <span style={{ fontSize: '13px', color: '#605e5c' }}>
-                Showing {(validPage - 1) * pageSize + 1} - {Math.min(validPage * pageSize, filteredDelegations.length)} of {filteredDelegations.length} items
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <IconButton
-                  iconProps={{ iconName: 'ChevronLeft' }}
-                  title="Previous Page"
-                  ariaLabel="Previous Page"
-                  disabled={validPage <= 1}
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                />
-                <span style={{ fontSize: '13px', fontWeight: 600 }}>
-                  Page {validPage} of {totalPages}
-                </span>
-                <IconButton
-                  iconProps={{ iconName: 'ChevronRight' }}
-                  title="Next Page"
-                  ariaLabel="Next Page"
-                  disabled={validPage >= totalPages}
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                />
+            {filteredDelegations.length === 0 && (
+              <div style={{ padding: '30px', textAlign: 'center', color: '#605e5c', backgroundColor: '#faf9f8', borderBottom: '1px solid #edebe9' }}>
+                No {statusFilter.toLowerCase()} auto-delegations found.
               </div>
-            </div>
+            )}
+            {filteredDelegations.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', padding: '10px 0', borderTop: '1px solid #edebe9' }}>
+                <span style={{ fontSize: '13px', color: '#605e5c' }}>
+                  Showing {(validPage - 1) * pageSize + 1} - {Math.min(validPage * pageSize, filteredDelegations.length)} of {filteredDelegations.length} items
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <IconButton
+                    iconProps={{ iconName: 'ChevronLeft' }}
+                    title="Previous Page"
+                    ariaLabel="Previous Page"
+                    disabled={validPage <= 1}
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  />
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                    Page {validPage} of {totalPages}
+                  </span>
+                  <IconButton
+                    iconProps={{ iconName: 'ChevronRight' }}
+                    title="Next Page"
+                    ariaLabel="Next Page"
+                    disabled={validPage >= totalPages}
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  />
+                </div>
+              </div>
+            )}
           </>
-        ) : (
-          <p style={{ padding: '20px 0', color: '#605e5c' }}>No {statusFilter.toLowerCase()} auto-delegations found.</p>
         )}
       </div>
 
@@ -754,10 +924,13 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
           <DefaultButton onClick={() => {
             setIsPanelOpen(false);
             setEditingId(null);
+            setInitialFormState(null);
             setErrorMsg("");
             setSuccessMsg("");
           }} text="Cancel" disabled={isDelegating} />
-          <PrimaryButton onClick={handleDelegate} text={editingId ? "Update" : "Add"} disabled={isDelegating} />
+          {hasFormChanged && (
+            <PrimaryButton onClick={handleDelegate} text={editingId ? "Update" : "Add"} disabled={isDelegating} />
+          )}
         </DialogFooter>
       </Dialog>
 
@@ -769,11 +942,92 @@ export const DelegationRunner: React.FC<IDelegationRunnerProps> = (props) => {
           title: 'Delete Task Delegation',
           subText: 'Are you sure you want to delete this task delegation? This action cannot be undone.'
         }}
+        modalProps={{
+          isBlocking: false,
+          styles: { main: { minWidth: 480, maxWidth: 540 } }
+        }}
       >
+        {itemToDelete && (
+          <div style={{
+            marginTop: '12px',
+            backgroundColor: '#f3f2f1',
+            padding: '12px 16px',
+            borderRadius: '4px',
+            fontSize: '13px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px'
+          }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '6px 12px', alignItems: 'center' }}>
+              <strong>Delegate from:</strong>
+              <OverflowText text={userCacheRef.current[itemToDelete.userId]?.email || itemToDelete.userId} />
+
+              <strong>Delegate to:</strong>
+              <OverflowText text={itemToDelete.standIns?.[0]?.emails?.[0] || itemToDelete.standIns?.[0]?.id || '-'} />
+
+              <strong>Effective From:</strong>
+              <span>
+                {itemToDelete.effectiveFrom ? `${new Date(itemToDelete.effectiveFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${new Date(itemToDelete.effectiveFrom).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '-'}
+              </span>
+
+              <strong>Effective To:</strong>
+              <span>
+                {itemToDelete.effectiveTo ? `${new Date(itemToDelete.effectiveTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${new Date(itemToDelete.effectiveTo).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '-'}
+              </span>
+
+              {itemToDelete.message ? (
+                <>
+                  <strong>Message:</strong>
+                  <OverflowText text={itemToDelete.message} />
+                </>
+              ) : null}
+            </div>
+          </div>
+        )}
         <DialogFooter>
           {isDelegating && <span style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '10px' }}><Spinner size={SpinnerSize.small} label="Deleting..." labelPosition="left" /></span>}
           <PrimaryButton onClick={confirmDelete} text="Delete" disabled={isDelegating} style={{ backgroundColor: '#d13438', borderColor: '#d13438' }} />
           <DefaultButton onClick={() => setIsDeleteDialogOpen(false)} text="Cancel" disabled={isDelegating} />
+        </DialogFooter>
+      </Dialog>
+
+      <Dialog
+        hidden={!isUserDetailOpen}
+        onDismiss={() => setIsUserDetailOpen(false)}
+        dialogContentProps={{
+          type: DialogType.normal,
+          title: 'Nintex User Details',
+          showCloseButton: true
+        }}
+        modalProps={{
+          isBlocking: false,
+          styles: { main: { minWidth: 650, maxWidth: 750 } }
+        }}
+      >
+        {userDetailLoading ? (
+          <div style={{ padding: '20px 0', textAlign: 'center' }}>
+            <Spinner size={SpinnerSize.large} label="Loading user details..." />
+          </div>
+        ) : userDetailError ? (
+          <MessageBar messageBarType={MessageBarType.error}>{userDetailError}</MessageBar>
+        ) : selectedNintexUser ? (
+          <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <Persona
+              text={`${selectedNintexUser.firstName || ''} ${selectedNintexUser.lastName || ''}`.trim() || selectedNintexUser.email || selectedUserId}
+              secondaryText={selectedNintexUser.email}
+              tertiaryText={`ID: ${selectedNintexUser.id}`}
+              size={PersonaSize.size56}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '8px 12px', fontSize: '13px', marginTop: '10px', backgroundColor: '#f3f2f1', padding: '12px 16px', borderRadius: '4px', alignItems: 'center' }}>
+              <strong>First Name:</strong> <OverflowText text={selectedNintexUser.firstName || '-'} />
+              <strong>Last Name:</strong> <OverflowText text={selectedNintexUser.lastName || '-'} />
+              <strong>Email:</strong> <OverflowText text={selectedNintexUser.email || '-'} />
+              <strong>User ID:</strong> <OverflowText text={selectedNintexUser.id || '-'} style={{ fontFamily: 'monospace' }} />
+            </div>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <DefaultButton onClick={() => setIsUserDetailOpen(false)} text="Close" />
         </DialogFooter>
       </Dialog>
     </div>

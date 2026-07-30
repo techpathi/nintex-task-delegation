@@ -206,9 +206,25 @@ export class NintexApiService {
     return true;
   }
 
-  public async listAutoDelegations(token: string): Promise<INintexAutoDelegation[]> {
-    const endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations`;
+  public async listAutoDelegations(token: string, statusFilter: 'Active' | 'Scheduled' | 'Expired' | 'All' = 'All'): Promise<INintexAutoDelegation[]> {
+    let endpoint = `${this.baseUrl}/workflows/v2/tasks/autodelegations`;
     
+    const now = new Date();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(now.getDate() - 30);
+
+    const queryParams: string[] = [];
+
+    if (statusFilter === 'Expired') {
+      queryParams.push(`effectiveTo=${encodeURIComponent(thirtyDaysAgo.toISOString())}`);
+    } else if (statusFilter === 'Active') {
+      queryParams.push(`effectiveTo=${encodeURIComponent(now.toISOString())}`);
+    }
+
+    if (queryParams.length > 0) {
+      endpoint += `?${queryParams.join('&')}`;
+    }
+
     const options: IHttpClientOptions = {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -217,12 +233,43 @@ export class NintexApiService {
     };
 
     const response: HttpClientResponse = await this.httpClient.get(endpoint, HttpClient.configurations.v1, options);
+
     if (!response.ok) {
       await this.handleResponseError(response, "Failed to fetch auto delegations");
     }
 
     const data = await response.json();
-    return Array.isArray(data) ? data : data.taskAutoDelegations || data.data || [];
+    let delegations: INintexAutoDelegation[] = Array.isArray(data) ? data : data.taskAutoDelegations || data.data || [];
+
+    const getItemStatus = (item: INintexAutoDelegation): 'Active' | 'Scheduled' | 'Expired' => {
+      const f = new Date(item.effectiveFrom);
+      const t = new Date(item.effectiveTo);
+      if (now >= f && now <= t) return 'Active';
+      if (now < f) return 'Scheduled';
+      return 'Expired';
+    };
+
+    if (statusFilter !== 'All') {
+      delegations = delegations.filter(item => {
+        const status = getItemStatus(item);
+        if (statusFilter === 'Expired') {
+          if (status !== 'Expired') return false;
+          const to = new Date(item.effectiveTo);
+          return to >= thirtyDaysAgo;
+        }
+        return status === statusFilter;
+      });
+    } else {
+      delegations = delegations.filter(item => {
+        if (getItemStatus(item) === 'Expired') {
+          const to = new Date(item.effectiveTo);
+          return to >= thirtyDaysAgo;
+        }
+        return true;
+      });
+    }
+
+    return delegations;
   }
 
   public async searchNintexUsers(filterText: string, token: string): Promise<INintexUser[]> {
